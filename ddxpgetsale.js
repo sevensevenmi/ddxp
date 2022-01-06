@@ -1,36 +1,58 @@
 /*
-叮咚每日签到积分
+叮咚获取当前折扣商品
 [task_local]
-1 0 * * * https://raw.githubusercontent.com/justplayscript/ddxp/main/ddxpsign.js, tag=叮咚每日签到积分, enabled=true
+0 9-23 * * * https://raw.githubusercontent.com/justplayscript/ddxp/main/ddxpautoeval.js, tag=叮咚获取当前折扣商品, enabled=true
+配置变量 ddxpzk="供港壹号鲜牛奶@纯悦&9.9"
 */
 
-const $ = new Env('叮咚每日签到积分');
+const $ = new Env('叮咚获取当前折扣商品');
+const notify = $.isNode() ? require('./sendNotify') : null;
 const dr = "@"
+const dr2 = "&"
 let ddxpurlArr = [],
     ddxphdArr = [],
     ddxpcount = ''
 let time = Math.round(Date.now() / 1000)
 let ddxpurl = $.getdata('ddxpurl')
 let ddxphd = $.getdata('ddxphd')
+let ddxpzk = $.getdata('ddxpzk')
+let keyword = ""
+let sale = ""
+
+let uid = ""
+let latitude = ""
+let longitude = ""
+let station_id = ""
+
+let saleArr = "特价列表"
 !(async () => {
-    ddxpurlArr = (ddxpurl || "").split(dr)
-    ddxphdArr = (ddxphd || "").split(dr)
+    ddxpurlArr = ($.getdata('ddxpurl') || "").split(dr)
+    ddxphdArr = ($.getdata('ddxphd') || "").split(dr)
+    ddxpzkArr = ($.getdata('ddxpzk') || "").split(dr)
 
-    console.log(`------------- 共${ddxphdArr.length}个账号-------------\n`)
-    for (let i = 0; i < ddxphdArr.length; i++) {
-        if (ddxphdArr[i]) {
-            getUrl(ddxpurlArr[i])
-            ddxphd = ddxphdArr[i];
+    if ($.getdata('ddxpzk')) {
+        console.log(`------------- 共${ddxpzkArr.length}个商品-------------\n`)
+        getUrl(ddxpurlArr[0])
+        ddxphd = ddxphdArr[0];
+        for (let i = 0; i < ddxpzkArr.length; i++) {
+            if (ddxphdArr[0]) {
+                let v = ddxpzkArr[i].split(dr2)
+                keyword = v[0]
+                sale = v[1] == null ? 0 : +v[1]
 
-            $.index = i + 1;
-            console.log(`\n开始【叮咚签到${$.index}】`)
-            await ddxpqd();
+                $.index = i + 1;
+                console.log(`\n开始【叮咚判断折扣${$.index}】`)
+                await ddxpSale();
+            }
+        }
+        if (saleArr != "特价列表") {
+            $.msg($.name, "", saleArr)
+            if (notify) notify.sendNotify($.name, saleArr)
         }
     }
 })()
     .catch((e) => $.logErr(e))
     .finally(() => $.done())
-
 
 /**
  * 共用header
@@ -44,13 +66,6 @@ function pubHeader() {
         'accept-encoding': 'gzip, deflate, br'
     }
 }
-
-uid = ""
-latitude = ""
-longitude = ""
-station_id = ""
-userTaskLogId = ""
-userTasks = []
 
 function getUrl(ddxpurl) {
     let url = ddxpurl.split("?")
@@ -69,39 +84,64 @@ function getUrl(ddxpurl) {
     station_id = sendInfo["station_id"]
 }
 
-//积分签到
-function ddxpqd(timeout = 0) {
+//获取折扣
+function ddxpSale(timeout = 0) {
     return new Promise((resolve) => {
         let header = pubHeader()
-        header["origin"] = "https://activity.m.ddxq.mobi"
-        header["referer"] = "https://activity.m.ddxq.mobi/"
         let url = {
-            url: `https://sunquan.api.ddxq.mobi/api/v2/user/signin/`,
+            url: `https://maicai.api.ddxq.mobi/search/searchProduct?app_client_id=1&countryCode=HK&keyword=${keyword}&page=1&station_id=${station_id}`,
             headers: header,
+        }
+		console.log(keyword,station_id)
+        $.get(url, async (err, resp, data) => {
+            try {
+                const result = JSON.parse(data)
+                if (result.code == 0) {
+                    for (const val of result.data.product_list) {
+                        console.log(sale == 0 , val.price <= sale , val.name.indexOf(keyword) > -1 , val.stock_number > 0)
+                        if (val.name.indexOf(keyword) > -1 && val.stock_number > 0) {
+                            if (+val.price < +val.origin_price) {
+                                if (sale == 0 || val.price <= sale)
+                                    saleArr += `${val.name}\n原价${val.origin_price}现:${val.price}\n`
+                            } else if (val.vip_price != null && val.vip_price != "" && +val.vip_price < +val.origin_price) {
+                                if (sale == 0 || val.vip_price <= sale)
+                                    saleArr += `${val.name}\n原价${val.origin_price} 现vip:${val.vip_price}\n`
+                            }
+                            break;
+                        }
+                    }
+                } else {
+                    console.log(result)
+                }
+            } catch (e) {
+                //$.logErr(e, resp);
+            } finally {
+                resolve()
+            }
+        }, timeout)
+    })
+}
+
+function sendsale(timeout = 0) {
+    return new Promise((resolve) => {
+        // let header = pubHeader()
+        let url = {
+            url: `http://www.pushplus.plus/send`,
+            headers: {
+                'accept': '*/*',
+            },
             body: {
-                api_version: "9.7.3",
-                app_version: "1.0.0",
-                app_client_id: 3,
-                station_id: station_id,
-                native_version: "9.36.2",
-                city_number: 1103,
-                latitude: latitude,
-                longitude: longitude,
+                "token": '625fa950d66e4bd2bc0d8d949bf8b819',
+                "title": $.name,
+                "content": saleArr,
+                "template": 'txt'
             }
         }
-        
-		if($.isNode()) {
-			url.body = `api_version=9.7.3&app_version=1.0.0&app_client_id=3&station_id=${station_id}&native_version=9.36.2&city_number=1103&latitude=${latitude}&longitude=${longitude}`
-		}
 
         $.post(url, async (err, resp, data) => {
             try {
                 const result = JSON.parse(data)
-                if (result.success) {
-                    console.log('\n积分签到: 成功')
-                } else {
-                    console.log(result)
-                }
+                console.log(data)
             } catch (e) {
                 //$.logErr(e, resp);
             } finally {
@@ -465,6 +505,7 @@ function Env(t, e) {
                     }
                 }
             };
+
             this.isMute || (this.isSurge() || this.isLoon() ? $notification.post(e, s, i, o(r)) : this.isQuanX() && $notify(e, s, i, o(r)));
             let h = ["", "==============\ud83d\udce3\u7cfb\u7edf\u901a\u77e5\ud83d\udce3=============="];
             h.push(e), s && h.push(s), i && h.push(i), console.log(h.join("\n")), this.logs = this.logs.concat(h)
@@ -490,3 +531,4 @@ function Env(t, e) {
         }
     }(t, e)
 }
+
